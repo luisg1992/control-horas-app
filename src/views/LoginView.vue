@@ -14,7 +14,7 @@ const errorMessage = ref('')
 async function login() {
   loading.value = true
   errorMessage.value = ''
-  const internalEmail = `${username.value.trim()}@tuempresa.com``
+  const internalEmail = `${username.value.trim()}@tuempresa.com`
 
   const { error } = await supabase.auth.signInWithPassword({
     email: internalEmail,
