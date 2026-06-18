@@ -30,6 +30,12 @@ const extraForm = ref({
   hours: 1,
 })
 
+const latenessForm = ref({
+  date: '',
+  hours: 0.5,
+  reason: '',
+})
+
 const timeOffForm = ref({
   tipo: 'RECUPERAR_HORAS',
   fechaInicio: '',
@@ -152,6 +158,10 @@ function requestTitle(request) {
     return 'Horas extra trabajadas'
   }
 
+  if (request.tipo === 'TARDANZA') {
+    return 'Tardanza'
+  }
+
   return request.tipo === 'VACACIONES' ? 'Tiempo libre: vacaciones' : 'Tiempo libre: horas acumuladas'
 }
 
@@ -210,6 +220,16 @@ function openTimeOffModal() {
     motivo: '',
   }
   activeModal.value = 'timeOff'
+}
+
+function openLatenessModal() {
+  formError.value = ''
+  latenessForm.value = {
+    date: '',
+    hours: 0.5,
+    reason: '',
+  }
+  activeModal.value = 'lateness'
 }
 
 function openPasswordModal() {
@@ -365,6 +385,36 @@ async function submitExtraHours() {
 
   if (error) {
     formError.value = error.message || 'No se pudo registrar la carga de horas.'
+    return
+  }
+
+  closeModal()
+  await loadDashboard()
+}
+
+async function submitLateness() {
+  formError.value = ''
+
+  if (!latenessForm.value.date || Number(latenessForm.value.hours) <= 0) {
+    formError.value = 'Completa la fecha y la cantidad de horas.'
+    return
+  }
+
+  const start = dateOnlyToLocalDate(latenessForm.value.date, 0, 0, 0)
+  const hours = Number(latenessForm.value.hours)
+
+  saving.value = true
+
+  const { error } = await supabase.rpc('registrar_tardanza', {
+    p_fecha: start.toISOString(),
+    p_cantidad: hours,
+    p_motivo: latenessForm.value.reason.trim() || 'Tardanza',
+  })
+
+  saving.value = false
+
+  if (error) {
+    formError.value = error.message || 'No se pudo registrar la tardanza.'
     return
   }
 
@@ -535,6 +585,11 @@ onMounted(loadDashboard)
           <span class="block text-lg font-black">Solicitar Tiempo Libre / Vacaciones (-)</span>
           <span class="mt-1 block text-sm font-medium">Usa horas acumuladas o dias de vacaciones.</span>
         </button>
+
+        <button class="rounded-lg bg-amber-300 px-4 py-5 text-left text-slate-950 shadow-lg shadow-black/20" type="button" @click="openLatenessModal">
+          <span class="block text-lg font-black">Registrar Tardanza (-)</span>
+          <span class="mt-1 block text-sm font-medium">Descuenta horas directamente de la bolsa.</span>
+        </button>
       </section>
 
       <CalendarioDisponibilidad />
@@ -574,6 +629,13 @@ onMounted(loadDashboard)
               <p class="text-sm text-slate-300">{{ request.descripcion_ticket }}</p>
               <p class="mt-2 text-xs text-slate-500">Duracion decimal</p>
               <p class="text-sm font-semibold text-emerald-300">{{ request.cantidad }} horas</p>
+            </div>
+
+            <div v-else-if="request.tipo === 'TARDANZA'" class="mt-3 rounded-lg bg-slate-950 p-3">
+              <p class="text-xs text-slate-500">Motivo</p>
+              <p class="text-sm text-slate-300">{{ request.motivo }}</p>
+              <p class="mt-2 text-xs text-slate-500">Descuento</p>
+              <p class="text-sm font-semibold text-amber-200">-{{ request.cantidad }} horas</p>
             </div>
 
             <div v-else class="mt-3">
@@ -692,6 +754,67 @@ onMounted(loadDashboard)
             :disabled="!canSubmitExtra"
           >
             {{ saving ? 'Guardando...' : 'Enviar a Aprobacion' }}
+          </button>
+        </form>
+
+        <form
+          v-else-if="activeModal === 'lateness'"
+          class="w-full rounded-t-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl"
+          @submit.prevent="submitLateness"
+        >
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-xl font-bold">Registrar Tardanza</h2>
+              <p class="mt-1 text-sm text-slate-400">Descuenta horas sin aprobacion.</p>
+            </div>
+            <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300" type="button" @click="closeModal">
+              Cerrar
+            </button>
+          </div>
+
+          <label class="mt-5 block">
+            <span class="text-sm font-medium text-slate-200">Fecha</span>
+            <input
+              v-model="latenessForm.date"
+              class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
+              type="date"
+              @click="openNativePicker"
+              @focus="openNativePicker"
+              required
+            />
+          </label>
+
+          <label class="mt-4 block">
+            <span class="text-sm font-medium text-slate-200">Horas a descontar</span>
+            <input
+              v-model.number="latenessForm.hours"
+              class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
+              min="0.5"
+              step="0.5"
+              type="number"
+              required
+            />
+          </label>
+
+          <label class="mt-4 block">
+            <span class="text-sm font-medium text-slate-200">Motivo opcional</span>
+            <textarea
+              v-model="latenessForm.reason"
+              class="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base outline-none focus:border-emerald-400"
+              placeholder="Llegada tarde"
+            />
+          </label>
+
+          <p v-if="formError" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-200">
+            {{ formError }}
+          </p>
+
+          <button
+            class="mt-5 h-12 w-full rounded-lg bg-amber-300 font-black text-slate-950 transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+            type="submit"
+            :disabled="saving"
+          >
+            {{ saving ? 'Guardando...' : 'Registrar Tardanza' }}
           </button>
         </form>
 
