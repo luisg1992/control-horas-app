@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { createClient } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 
-const internalDomain = '@tuempresa.internal'
+const internalDomain = '@tuempresa.com'
 const roles = ['Developer', 'QA', 'Business', 'Admin']
 
 const users = ref([])
