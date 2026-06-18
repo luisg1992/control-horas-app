@@ -15,6 +15,13 @@ const formError = ref('')
 const activeModal = ref(null)
 const checkingAvailability = ref(false)
 const availabilityConflict = ref(false)
+const historyPage = ref(1)
+const historyPageSize = 5
+const passwordForm = ref({
+  password: '',
+  confirmPassword: '',
+})
+const passwordMessage = ref('')
 
 const extraForm = ref({
   ticketCode: '',
@@ -84,6 +91,14 @@ const timeOffAmount = computed(() => {
   return Number(hours.toFixed(2))
 })
 
+const exceedsAvailableHours = computed(() => {
+  if (timeOffForm.value.tipo !== 'RECUPERAR_HORAS') {
+    return false
+  }
+
+  return timeOffAmount.value > Number(profile.value?.saldo_horas || 0)
+})
+
 const canSubmitExtra = computed(() => {
   return (
     !saving.value &&
@@ -98,9 +113,19 @@ const canSubmitTimeOff = computed(() => {
     !saving.value &&
     !checkingAvailability.value &&
     !availabilityConflict.value &&
+    !exceedsAvailableHours.value &&
     timeOffRange.value?.isValid &&
     timeOffForm.value.motivo.trim().length > 0
   )
+})
+
+const totalHistoryPages = computed(() => {
+  return Math.max(1, Math.ceil(requests.value.length / historyPageSize))
+})
+
+const paginatedRequests = computed(() => {
+  const start = (historyPage.value - 1) * historyPageSize
+  return requests.value.slice(start, start + historyPageSize)
 })
 
 function dateOnlyToLocalDate(value, hours, minutes, seconds) {
@@ -116,6 +141,10 @@ function formatDate(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function openNativePicker(event) {
+  event.target.showPicker?.()
 }
 
 function requestTitle(request) {
@@ -155,6 +184,7 @@ async function loadDashboard() {
 
   profile.value = profileData
   requests.value = requestError ? [] : requestData || []
+  historyPage.value = 1
   loading.value = false
 }
 
@@ -182,8 +212,52 @@ function openTimeOffModal() {
   activeModal.value = 'timeOff'
 }
 
+function openPasswordModal() {
+  formError.value = ''
+  passwordMessage.value = ''
+  passwordForm.value = {
+    password: '',
+    confirmPassword: '',
+  }
+  activeModal.value = 'password'
+}
+
 function closeModal() {
   activeModal.value = null
+}
+
+async function updatePassword() {
+  formError.value = ''
+  passwordMessage.value = ''
+
+  if (passwordForm.value.password.length < 8) {
+    formError.value = 'La contrasena debe tener al menos 8 caracteres.'
+    return
+  }
+
+  if (passwordForm.value.password !== passwordForm.value.confirmPassword) {
+    formError.value = 'Las contrasenas no coinciden.'
+    return
+  }
+
+  saving.value = true
+
+  const { error } = await supabase.auth.updateUser({
+    password: passwordForm.value.password,
+  })
+
+  saving.value = false
+
+  if (error) {
+    formError.value = error.message || 'No se pudo actualizar la contrasena.'
+    return
+  }
+
+  passwordMessage.value = 'Contrasena actualizada correctamente.'
+  passwordForm.value = {
+    password: '',
+    confirmPassword: '',
+  }
 }
 
 async function checkAvailability() {
@@ -197,13 +271,58 @@ async function checkAvailability() {
 
   checkingAvailability.value = true
 
+  const { data: ownConflicts, error: ownConflictsError } = await supabase
+    .from('solicitudes')
+    .select('id')
+    .eq('usuario_id', user.value.id)
+    .in('estado', ['PENDIENTE', 'APROBADA'])
+    .neq('tipo', 'HORAS_EXTRA')
+    .lt('fecha_inicio', range.end.toISOString())
+    .gt('fecha_fin', range.start.toISOString())
+    .limit(1)
+
+  if (ownConflictsError) {
+    console.error('Error validando solicitudes propias:', ownConflictsError)
+    checkingAvailability.value = false
+    formError.value = 'No se pudo validar la disponibilidad. Intenta de nuevo.'
+    return
+  }
+
+  if ((ownConflicts || []).length > 0) {
+    checkingAvailability.value = false
+    availabilityConflict.value = true
+    formError.value = 'Ya tienes una solicitud pendiente o aprobada en ese mismo horario.'
+    return
+  }
+
+  const { data: teammates, error: teammatesError } = await supabase
+    .from('perfiles')
+    .select('id')
+    .eq('rol', profile.value.rol)
+    .eq('activo', true)
+    .neq('id', user.value.id)
+
+  if (teammatesError) {
+    console.error('Error consultando compañeros para disponibilidad:', teammatesError)
+    checkingAvailability.value = false
+    formError.value = 'No se pudo validar la disponibilidad. Intenta de nuevo.'
+    return
+  }
+
+  const teammateIds = (teammates || []).map((teammate) => teammate.id)
+
+  if (teammateIds.length === 0) {
+    checkingAvailability.value = false
+    availabilityConflict.value = false
+    return
+  }
+
   const { data, error } = await supabase
     .from('solicitudes')
-    .select('id, usuario_id, fecha_inicio, fecha_fin, perfiles!inner(rol)')
+    .select('id, usuario_id, fecha_inicio, fecha_fin')
     .eq('estado', 'APROBADA')
-    .eq('perfiles.rol', profile.value.rol)
+    .in('usuario_id', teammateIds)
     .neq('tipo', 'HORAS_EXTRA')
-    .neq('usuario_id', user.value.id)
     .lt('fecha_inicio', range.end.toISOString())
     .gt('fecha_fin', range.start.toISOString())
     .limit(1)
@@ -211,6 +330,7 @@ async function checkAvailability() {
   checkingAvailability.value = false
 
   if (error) {
+    console.error('Error validando disponibilidad:', error)
     formError.value = 'No se pudo validar la disponibilidad. Intenta de nuevo.'
     return
   }
@@ -262,6 +382,11 @@ async function submitTimeOff() {
     return
   }
 
+  if (exceedsAvailableHours.value) {
+    formError.value = 'No tienes suficientes horas extra acumuladas para esta solicitud.'
+    return
+  }
+
   await checkAvailability()
 
   if (availabilityConflict.value) {
@@ -290,6 +415,43 @@ async function submitTimeOff() {
 
   closeModal()
   await loadDashboard()
+}
+
+async function deletePendingRequest(request) {
+  if (request.estado !== 'PENDIENTE') {
+    return
+  }
+
+  const confirmed = window.confirm('¿Quieres eliminar esta solicitud pendiente?')
+
+  if (!confirmed) {
+    return
+  }
+
+  const { error } = await supabase
+    .from('solicitudes')
+    .delete()
+    .eq('id', request.id)
+    .eq('usuario_id', user.value.id)
+    .eq('estado', 'PENDIENTE')
+
+  if (error) {
+    formError.value = error.message || 'No se pudo eliminar la solicitud.'
+    return
+  }
+
+  requests.value = requests.value.filter((item) => item.id !== request.id)
+  if (historyPage.value > totalHistoryPages.value) {
+    historyPage.value = totalHistoryPages.value
+  }
+}
+
+function goToPreviousHistoryPage() {
+  historyPage.value = Math.max(1, historyPage.value - 1)
+}
+
+function goToNextHistoryPage() {
+  historyPage.value = Math.min(totalHistoryPages.value, historyPage.value + 1)
 }
 
 async function logout() {
@@ -322,9 +484,14 @@ onMounted(loadDashboard)
           <h1 class="mt-1 text-2xl font-bold">Hola, {{ profile?.nombre || 'empleado' }}</h1>
           <p class="mt-1 text-sm text-slate-400">{{ profile?.rol || 'Cargando perfil...' }}</p>
         </div>
-        <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200" type="button" @click="logout">
-          Salir
-        </button>
+        <div class="grid gap-2">
+          <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200" type="button" @click="openPasswordModal">
+            Clave
+          </button>
+          <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200" type="button" @click="logout">
+            Salir
+          </button>
+        </div>
       </header>
 
       <section class="mt-6 grid grid-cols-2 gap-3">
@@ -387,7 +554,7 @@ onMounted(loadDashboard)
         </div>
 
         <ul v-else class="mt-5 space-y-3">
-          <li v-for="request in requests" :key="request.id" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <li v-for="request in paginatedRequests" :key="request.id" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <p class="font-semibold">{{ requestTitle(request) }}</p>
@@ -415,8 +582,41 @@ onMounted(loadDashboard)
                 Cantidad: {{ request.cantidad }} {{ request.tipo === 'VACACIONES' ? 'dias' : 'horas' }}
               </p>
             </div>
+
+            <button
+              v-if="request.estado === 'PENDIENTE'"
+              class="mt-4 h-11 w-full rounded-lg bg-red-400 text-sm font-black text-slate-950"
+              type="button"
+              @click="deletePendingRequest(request)"
+            >
+              Eliminar Solicitud Pendiente
+            </button>
           </li>
         </ul>
+
+        <div v-if="requests.length > historyPageSize" class="mt-4 flex items-center justify-between gap-3">
+          <button
+            class="h-10 rounded-lg border border-slate-700 px-4 text-sm font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            :disabled="historyPage === 1"
+            @click="goToPreviousHistoryPage"
+          >
+            Anterior
+          </button>
+
+          <span class="text-sm text-slate-400">
+            {{ historyPage }} / {{ totalHistoryPages }}
+          </span>
+
+          <button
+            class="h-10 rounded-lg border border-slate-700 px-4 text-sm font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            :disabled="historyPage === totalHistoryPages"
+            @click="goToNextHistoryPage"
+          >
+            Siguiente
+          </button>
+        </div>
       </section>
     </section>
 
@@ -464,6 +664,8 @@ onMounted(loadDashboard)
               v-model="extraForm.workDate"
               class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
               type="date"
+              @click="openNativePicker"
+              @focus="openNativePicker"
               required
             />
           </label>
@@ -494,7 +696,7 @@ onMounted(loadDashboard)
         </form>
 
         <form
-          v-else
+          v-else-if="activeModal === 'timeOff'"
           class="w-full rounded-t-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl"
           @submit.prevent="submitTimeOff"
         >
@@ -526,6 +728,8 @@ onMounted(loadDashboard)
                 v-model="timeOffForm.fechaInicio"
                 class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
                 :type="timeOffForm.tipo === 'RECUPERAR_HORAS' ? 'datetime-local' : 'date'"
+                @click="openNativePicker"
+                @focus="openNativePicker"
                 required
               />
             </label>
@@ -536,6 +740,8 @@ onMounted(loadDashboard)
                 v-model="timeOffForm.fechaFin"
                 class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
                 :type="timeOffForm.tipo === 'RECUPERAR_HORAS' ? 'datetime-local' : 'date'"
+                @click="openNativePicker"
+                @focus="openNativePicker"
                 required
               />
             </label>
@@ -555,8 +761,12 @@ onMounted(loadDashboard)
             Validando disponibilidad...
           </p>
 
-          <p v-if="availabilityConflict" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm font-semibold text-red-200">
+          <p v-if="availabilityConflict && !formError" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm font-semibold text-red-200">
             Alerta de disponibilidad: un companero de tu equipo ya tiene libre este horario.
+          </p>
+
+          <p v-if="exceedsAvailableHours" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm font-semibold text-red-200">
+            No tienes suficientes horas extra acumuladas para esta solicitud.
           </p>
 
           <p v-if="formError" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-200">
@@ -575,6 +785,60 @@ onMounted(loadDashboard)
             :disabled="!canSubmitTimeOff"
           >
             {{ saving ? 'Enviando...' : 'Enviar Solicitud' }}
+          </button>
+        </form>
+
+        <form
+          v-else
+          class="w-full rounded-t-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl"
+          @submit.prevent="updatePassword"
+        >
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-xl font-bold">Cambiar Contrasena</h2>
+              <p class="mt-1 text-sm text-slate-400">Actualiza la clave temporal asignada.</p>
+            </div>
+            <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300" type="button" @click="closeModal">
+              Cerrar
+            </button>
+          </div>
+
+          <label class="mt-5 block">
+            <span class="text-sm font-medium text-slate-200">Nueva contrasena</span>
+            <input
+              v-model="passwordForm.password"
+              class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+          </label>
+
+          <label class="mt-4 block">
+            <span class="text-sm font-medium text-slate-200">Confirmar contrasena</span>
+            <input
+              v-model="passwordForm.confirmPassword"
+              class="mt-2 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base outline-none focus:border-emerald-400"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+          </label>
+
+          <p v-if="formError" class="mt-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-200">
+            {{ formError }}
+          </p>
+
+          <p v-if="passwordMessage" class="mt-4 rounded-lg bg-emerald-400/10 p-3 text-sm text-emerald-200">
+            {{ passwordMessage }}
+          </p>
+
+          <button
+            class="mt-5 h-12 w-full rounded-lg bg-emerald-400 font-black text-slate-950 transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+            type="submit"
+            :disabled="saving"
+          >
+            {{ saving ? 'Actualizando...' : 'Actualizar Contrasena' }}
           </button>
         </form>
       </section>

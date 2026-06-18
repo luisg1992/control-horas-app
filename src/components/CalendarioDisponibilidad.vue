@@ -7,6 +7,7 @@ const absences = ref([])
 const loading = ref(false)
 const errorMessage = ref('')
 const visibleDate = ref(new Date())
+const selectedDay = ref(null)
 
 const roleFilters = [
   { label: 'Todos', value: 'Todos' },
@@ -88,6 +89,15 @@ function formatHour(value) {
     .toLowerCase()
 }
 
+function formatLongDate(value) {
+  return new Intl.DateTimeFormat('es-CO', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(value)
+}
+
 function formatAbsenceForDay(absence, dayStart, dayEnd) {
   const start = new Date(absence.fecha_inicio)
   const end = new Date(absence.fecha_fin)
@@ -98,8 +108,24 @@ function formatAbsenceForDay(absence, dayStart, dayEnd) {
 
   return {
     id: absence.id,
+    name,
+    role,
+    start: formatHour(visibleStart),
+    end: formatHour(visibleEnd),
     label: `${name} (${role}): ${formatHour(visibleStart)}-${formatHour(visibleEnd)}`,
   }
+}
+
+function openDayDetail(day) {
+  if (day.empty) {
+    return
+  }
+
+  selectedDay.value = day
+}
+
+function closeDayDetail() {
+  selectedDay.value = null
 }
 
 function getMonthRange(date) {
@@ -255,11 +281,14 @@ onMounted(loadAbsences)
     </div>
 
     <div class="mt-1 grid grid-cols-7 gap-1">
-      <div
+      <button
         v-for="day in calendarDays"
         :key="day.key"
-        class="min-h-20 rounded-lg border p-1.5"
+        class="min-h-20 rounded-lg border p-1.5 text-left transition active:scale-[0.98]"
         :class="day.empty ? 'border-transparent bg-transparent' : 'border-slate-800 bg-slate-950'"
+        type="button"
+        :disabled="day.empty"
+        @click="openDayDetail(day)"
       >
         <template v-if="!day.empty">
           <div class="flex items-center justify-between">
@@ -281,7 +310,45 @@ onMounted(loadAbsences)
             </p>
           </div>
         </template>
-      </div>
+      </button>
+    </div>
+
+    <div v-if="selectedDay" class="fixed inset-0 z-50 bg-slate-950/80 px-4 py-5 backdrop-blur-sm">
+      <section class="mx-auto flex min-h-full w-full max-w-md items-end">
+        <div class="w-full rounded-t-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h3 class="text-xl font-bold">Detalle del dia</h3>
+              <p class="mt-1 text-sm capitalize text-slate-400">{{ formatLongDate(selectedDay.date) }}</p>
+            </div>
+            <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300" type="button" @click="closeDayDetail">
+              Cerrar
+            </button>
+          </div>
+
+          <div v-if="selectedDay.events.length === 0" class="mt-5 rounded-lg bg-slate-950 p-4 text-sm text-slate-400">
+            No hay ausencias aprobadas para este dia.
+          </div>
+
+          <ul v-else class="mt-5 space-y-3">
+            <li v-for="event in selectedDay.events" :key="event.id" class="rounded-lg border border-slate-800 bg-slate-950 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="font-bold text-slate-100">{{ event.name }}</p>
+                  <p class="mt-1 text-sm text-slate-400">{{ event.role }}</p>
+                </div>
+                <span class="rounded-full bg-red-400/10 px-3 py-1 text-xs font-bold text-red-100">
+                  Ocupado
+                </span>
+              </div>
+              <div class="mt-3 rounded-lg bg-slate-900 px-3 py-2">
+                <p class="text-xs text-slate-500">Horario</p>
+                <p class="mt-1 text-lg font-black text-red-100">{{ event.start }} - {{ event.end }}</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </section>
     </div>
   </section>
 </template>
