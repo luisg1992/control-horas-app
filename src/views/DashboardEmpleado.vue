@@ -119,7 +119,7 @@ function formatDate(value) {
 }
 
 function requestTitle(request) {
-  if (request.descripcion_ticket) {
+  if (request.tipo === 'HORAS_EXTRA') {
     return 'Horas extra trabajadas'
   }
 
@@ -202,7 +202,7 @@ async function checkAvailability() {
     .select('id, usuario_id, fecha_inicio, fecha_fin, perfiles!inner(rol)')
     .eq('estado', 'APROBADA')
     .eq('perfiles.rol', profile.value.rol)
-    .is('descripcion_ticket', null)
+    .neq('tipo', 'HORAS_EXTRA')
     .neq('usuario_id', user.value.id)
     .lt('fecha_inicio', range.end.toISOString())
     .gt('fecha_fin', range.start.toISOString())
@@ -228,19 +228,17 @@ async function submitExtraHours() {
 
   const start = dateOnlyToLocalDate(extraForm.value.workDate, 0, 0, 0)
   const end = new Date(start)
-  end.setMinutes(end.getMinutes() + Number(extraForm.value.hours) * 60)
+  const hours = Number(extraForm.value.hours)
+  end.setMinutes(end.getMinutes() + hours * 60)
 
   saving.value = true
 
-  const { error } = await supabase.from('solicitudes').insert({
-    usuario_id: user.value.id,
-    tipo: 'RECUPERAR_HORAS',
-    fecha_inicio: start.toISOString(),
-    fecha_fin: end.toISOString(),
-    cantidad: Number(extraForm.value.hours),
-    motivo: extraForm.value.ticketCode.trim(),
-    descripcion_ticket: extraForm.value.ticketDescription.trim() || null,
-    estado: 'PENDIENTE',
+  const { error } = await supabase.rpc('registrar_horas_extra', {
+    p_ticket: extraForm.value.ticketCode.trim(),
+    p_descripcion: extraForm.value.ticketDescription.trim() || 'Sin descripcion',
+    p_fecha_inicio: start.toISOString(),
+    p_fecha_fin: end.toISOString(),
+    p_cantidad: hours,
   })
 
   saving.value = false
@@ -402,7 +400,7 @@ onMounted(loadDashboard)
               </span>
             </div>
 
-            <div v-if="request.descripcion_ticket" class="mt-3 rounded-lg bg-slate-950 p-3">
+            <div v-if="request.tipo === 'HORAS_EXTRA'" class="mt-3 rounded-lg bg-slate-950 p-3">
               <p class="text-xs text-slate-500">Codigo del ticket</p>
               <p class="font-semibold text-slate-100">{{ request.motivo }}</p>
               <p class="mt-2 text-xs text-slate-500">Descripcion</p>
@@ -431,7 +429,7 @@ onMounted(loadDashboard)
         >
           <div class="flex items-start justify-between gap-4">
             <div>
-              <h2 class="text-xl font-bold">Registrar Horas Extra</h2>
+              <h2 class="text-xl font-bold">Registrar Horas Extras</h2>
               <p class="mt-1 text-sm text-slate-400">Carga el ticket trabajado para aprobacion.</p>
             </div>
             <button class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300" type="button" @click="closeModal">

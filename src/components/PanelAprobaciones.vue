@@ -26,7 +26,7 @@ const selectedReprogramRequest = computed(() => {
 })
 
 function isExtraHours(request) {
-  return Boolean(request.descripcion_ticket)
+  return request.tipo === 'HORAS_EXTRA'
 }
 
 function requestKindLabel(request) {
@@ -101,6 +101,7 @@ async function loadRequests() {
       'id, usuario_id, tipo, fecha_inicio, fecha_fin, cantidad, motivo, descripcion_ticket, estado, notas_aprobador, creado_en',
     )
     .in('estado', ['PENDIENTE', 'APROBADA'])
+    .in('tipo', ['RECUPERAR_HORAS', 'VACACIONES'])
     .order('creado_en', { ascending: false })
 
   if (solicitudesError) {

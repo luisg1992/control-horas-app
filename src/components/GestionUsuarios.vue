@@ -13,6 +13,7 @@ const processingId = ref('')
 const modalOpen = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const selectedRoles = ref({})
 
 const form = ref({
   nombre: '',
@@ -74,27 +75,57 @@ async function loadUsers() {
   }
 
   users.value = data || []
+  selectedRoles.value = Object.fromEntries((data || []).map((user) => [user.id, user.rol]))
 }
 
-async function deactivateUser(user) {
+async function updateUserStatus(user, activo) {
   processingId.value = user.id
   errorMessage.value = ''
   successMessage.value = ''
 
   const { error } = await supabase
     .from('perfiles')
-    .update({ activo: false })
+    .update({ activo })
     .eq('id', user.id)
 
   processingId.value = ''
 
   if (error) {
-    console.error('Error dando de baja:', error)
-    errorMessage.value = 'No se pudo dar de baja al colaborador.'
+    console.error('Error actualizando estado:', error)
+    errorMessage.value = error.message || 'No se pudo actualizar el estado del colaborador.'
     return
   }
 
-  successMessage.value = 'Colaborador dado de baja.'
+  successMessage.value = activo ? 'Colaborador dado de alta.' : 'Colaborador dado de baja.'
+  await loadUsers()
+}
+
+async function updateUserRole(user) {
+  const nextRole = selectedRoles.value[user.id]
+
+  if (!nextRole || nextRole === user.rol) {
+    return
+  }
+
+  processingId.value = user.id
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  const { error } = await supabase
+    .from('perfiles')
+    .update({ rol: nextRole })
+    .eq('id', user.id)
+
+  processingId.value = ''
+
+  if (error) {
+    console.error('Error actualizando rol:', error)
+    errorMessage.value = error.message || 'No se pudo actualizar el rol del colaborador.'
+    selectedRoles.value[user.id] = user.rol
+    return
+  }
+
+  successMessage.value = 'Rol actualizado correctamente.'
   await loadUsers()
 }
 
@@ -175,7 +206,7 @@ async function registerUser() {
 
   if (profileError) {
     console.error('Error creando perfil:', profileError)
-    errorMessage.value = 'La cuenta Auth se creo, pero fallo el perfil. Revisa la tabla perfiles.'
+    errorMessage.value = `La cuenta Auth se creo, pero fallo el perfil: ${profileError.message}`
     return
   }
 
@@ -230,9 +261,26 @@ onMounted(loadUsers)
           </span>
         </div>
 
-        <div class="mt-3 flex items-center justify-between rounded-lg bg-slate-950 px-3 py-2">
-          <span class="text-sm text-slate-400">Rol</span>
-          <span class="text-sm font-bold text-slate-100">{{ user.rol }}</span>
+        <div class="mt-3 rounded-lg bg-slate-950 p-3">
+          <label class="block">
+            <span class="text-sm text-slate-400">Rol</span>
+            <select
+              v-model="selectedRoles[user.id]"
+              class="mt-2 h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm font-bold text-slate-100 outline-none focus:border-emerald-400"
+            >
+              <option v-for="role in roles" :key="role" :value="role">
+                {{ role }}
+              </option>
+            </select>
+          </label>
+          <button
+            class="mt-3 h-10 w-full rounded-lg bg-sky-300 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            :disabled="processingId === user.id || selectedRoles[user.id] === user.rol"
+            @click="updateUserRole(user)"
+          >
+            Guardar Rol
+          </button>
         </div>
 
         <div class="mt-4 grid grid-cols-2 gap-3">
@@ -246,12 +294,13 @@ onMounted(loadUsers)
           </button>
 
           <button
-            class="h-11 rounded-lg bg-red-400 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+            class="h-11 rounded-lg text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+            :class="user.activo ? 'bg-red-400' : 'bg-emerald-400'"
             type="button"
-            :disabled="!user.activo || processingId === user.id"
-            @click="deactivateUser(user)"
+            :disabled="processingId === user.id"
+            @click="updateUserStatus(user, !user.activo)"
           >
-            Dar de Baja
+            {{ user.activo ? 'Dar de Baja' : 'Dar de Alta' }}
           </button>
         </div>
       </li>

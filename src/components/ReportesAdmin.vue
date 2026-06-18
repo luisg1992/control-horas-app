@@ -93,9 +93,8 @@ async function loadReports() {
     supabase
       .from('solicitudes')
       .select('id, usuario_id, cantidad, creado_en, descripcion_ticket')
-      .eq('tipo', 'RECUPERAR_HORAS')
+      .eq('tipo', 'HORAS_EXTRA')
       .eq('estado', 'APROBADA')
-      .not('descripcion_ticket', 'is', null)
       .gte('creado_en', range.start.toISOString())
       .lte('creado_en', range.end.toISOString()),
   ])

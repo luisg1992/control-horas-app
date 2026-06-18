@@ -11,6 +11,24 @@ const password = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 
+function getAllowedRedirect(profile) {
+  const redirect = route.query.redirect?.toString() || '/'
+
+  if (redirect.startsWith('/admin') && profile?.rol !== 'Admin') {
+    return '/'
+  }
+
+  if (redirect.startsWith('/aprobaciones') && !['Business', 'Admin'].includes(profile?.rol)) {
+    return '/'
+  }
+
+  if (redirect.startsWith('/sin-permiso')) {
+    return '/'
+  }
+
+  return redirect
+}
+
 async function login() {
   loading.value = true
   errorMessage.value = ''
@@ -28,7 +46,28 @@ async function login() {
     return
   }
 
-  await router.replace(route.query.redirect?.toString() || '/')
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    errorMessage.value = 'No se pudo validar la sesion.'
+    return
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from('perfiles')
+    .select('rol, activo')
+    .eq('id', user.id)
+    .single()
+
+  if (profileError || !profile || !profile.activo) {
+    await supabase.auth.signOut()
+    errorMessage.value = 'Tu perfil esta inactivo o no existe. Contacta a un administrador.'
+    return
+  }
+
+  await router.replace(getAllowedRedirect(profile))
 }
 </script>
 
